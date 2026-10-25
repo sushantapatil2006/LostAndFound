@@ -13,6 +13,22 @@ jobs:
     environment: production
 
     steps:
+      - name: Verify Google Cloud variables
+        env:
+          WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$WIF_PROVIDER" ]; then
+            echo "::error::GCP_WORKLOAD_IDENTITY_PROVIDER is missing"
+            exit 1
+          fi
+
+          if [ -z "$DEPLOY_SA" ]; then
+            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT is missing"
+            exit 1
+          fi
+
+          echo "Both Google Cloud authentication variables are available."
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
