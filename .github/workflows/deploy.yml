@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Git commit SHA to deploy (must be an immutable commit SHA)"
+        description: "Git commit SHA to deploy (must be an exact 40-character lowercase hex SHA)"
         required: true
 
 concurrency:
@@ -23,10 +23,6 @@ permissions:
 jobs:
   deploy:
     name: Deploy Release to Production VM
-    # Only run if CI and image publishing succeeded on main
-    if: >-
-      (github.event_name == 'workflow_dispatch') ||
-      (github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     environment: production
 
@@ -34,85 +30,167 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Requirement 2 & 15: Validate trigger preconditions inside step so failures are reported (not silently skipped)
+      - name: Validate Workflow Trigger and Upstream Status
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          EXPECTED_REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          echo "Evaluating trigger preconditions..."
+          if [ "${EVENT_NAME}" = "workflow_run" ]; then
+            if [ "${HEAD_REPO}" != "${EXPECTED_REPO}" ]; then
+              echo "::error::Triggering repository '${HEAD_REPO}' does not match expected repository '${EXPECTED_REPO}'."
+              exit 1
+            fi
+            if [ "${HEAD_BRANCH}" != "main" ]; then
+              echo "::error::Triggering branch '${HEAD_BRANCH}' is not 'main'."
+              exit 1
+            fi
+            if [ "${CONCLUSION}" != "success" ]; then
+              echo "::error::Upstream workflow 'CI and Container Publishing' finished with status '${CONCLUSION}' (expected 'success')."
+              exit 1
+            fi
+            echo "Preconditions verified: Upstream CI succeeded on main branch of ${EXPECTED_REPO}."
+          elif [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "Preconditions verified: Manual execution via workflow_dispatch."
+          else
+            echo "::error::Unsupported trigger event '${EVENT_NAME}'."
+            exit 1
+          fi
+
+      # Requirement 6: Fail explicitly if required GitHub Actions variables are missing
+      - name: Validate Required Google Cloud Variables
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_ZONE: ${{ vars.GCP_ZONE }}
+          GCP_VM_NAME: ${{ vars.GCP_VM_NAME }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+        run: |
+          MISSING=0
+          check_var() {
+            if [ -z "$2" ]; then
+              echo "::error::Missing required repository variable: $1"
+              MISSING=1
+            fi
+          }
+          check_var "GCP_PROJECT_ID" "${GCP_PROJECT_ID}"
+          check_var "GCP_ZONE" "${GCP_ZONE}"
+          check_var "GCP_VM_NAME" "${GCP_VM_NAME}"
+          check_var "GCP_WORKLOAD_IDENTITY_PROVIDER" "${GCP_WIF_PROVIDER}"
+          check_var "GCP_DEPLOY_SERVICE_ACCOUNT" "${GCP_DEPLOY_SA}"
+
+          if [ "${MISSING}" -ne 0 ]; then
+            echo "::error::Deployment halted: One or more required variables are missing under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "All required Google Cloud variables are present."
+
+      # Requirement 3 & 4: Pass release_tag via environment variable and validate exact SHA format
       - name: Determine and Validate Immutable Release Identifier
         id: release
+        env:
+          INPUT_TAG: ${{ github.event.inputs.release_tag }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEFAULT_SHA: ${{ github.sha }}
         run: |
-          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
-            TAG="${{ github.event.inputs.release_tag }}"
-          elif [ -n "${{ github.event.workflow_run.head_sha }}" ]; then
-            TAG="${{ github.event.workflow_run.head_sha }}"
+          if [ -n "${INPUT_TAG}" ]; then
+            TAG="${INPUT_TAG}"
+          elif [ -n "${RUN_SHA}" ]; then
+            TAG="${RUN_SHA}"
           else
-            TAG="${{ github.sha }}"
+            TAG="${DEFAULT_SHA}"
           fi
 
-          if [ "$TAG" = "latest" ]; then
-            echo "ERROR: Refusing to deploy mutable tag 'latest' in production."
+          # Normalize to lowercase and remove any whitespace
+          TAG="$(echo "${TAG}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+
+          # Strictly validate exact 40-character lowercase hex SHA format matching publishing workflow (type=sha,format=long)
+          if [[ ! "${TAG}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Release identifier '${TAG}' is invalid. It must be an exact 40-character lowercase hexadecimal Git commit SHA."
             exit 1
           fi
 
-          if [[ ! "$TAG" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
-            echo "ERROR: Release identifier '${TAG}' is not a valid immutable Git commit SHA."
-            exit 1
-          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Target Immutable Release SHA: ${TAG}"
 
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "Target Release SHA: ${TAG}"
-
-      - name: Log in to GitHub Container Registry
+      # Requirement 11 & 12: Authenticate to GHCR and verify image existence before deployment
+      - name: Log in to GitHub Container Registry on Runner
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase repository owner
+      - name: Lowercase repository owner for container registry inspection
         id: repo-owner
-        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
-
-      - name: Verify Both Frontend and Backend Images Are Published in GHCR
         run: |
-          TARGET_TAG="${{ steps.release.outputs.tag }}"
-          echo "--> Inspecting frontend image: ghcr.io/${{ steps.repo-owner.outputs.OWNER }}/lostandfound-frontend:${TARGET_TAG}"
-          docker manifest inspect "ghcr.io/${{ steps.repo-owner.outputs.OWNER }}/lostandfound-frontend:${TARGET_TAG}" > /dev/null
-          echo "--> Inspecting backend image: ghcr.io/${{ steps.repo-owner.outputs.OWNER }}/lostandfound-backend:${TARGET_TAG}"
-          docker manifest inspect "ghcr.io/${{ steps.repo-owner.outputs.OWNER }}/lostandfound-backend:${TARGET_TAG}" > /dev/null
-          echo "--> Verified: Both immutable images exist in GHCR."
+          echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify Both Frontend and Backend Images Exist in GHCR
+        env:
+          TARGET_TAG: ${{ steps.release.outputs.tag }}
+          OWNER: ${{ steps.repo-owner.outputs.OWNER }}
+        run: |
+          echo "--> Inspecting frontend image: ghcr.io/${OWNER}/lostandfound-frontend:${TARGET_TAG}"
+          if ! docker manifest inspect "ghcr.io/${OWNER}/lostandfound-frontend:${TARGET_TAG}" > /dev/null; then
+            echo "::error::Frontend image 'ghcr.io/${OWNER}/lostandfound-frontend:${TARGET_TAG}' was not found in GHCR."
+            exit 1
+          fi
+
+          echo "--> Inspecting backend image: ghcr.io/${OWNER}/lostandfound-backend:${TARGET_TAG}"
+          if ! docker manifest inspect "ghcr.io/${OWNER}/lostandfound-backend:${TARGET_TAG}" > /dev/null; then
+            echo "::error::Backend image 'ghcr.io/${OWNER}/lostandfound-backend:${TARGET_TAG}' was not found in GHCR."
+            exit 1
+          fi
+          echo "Verified: Both container images are confirmed published in GHCR."
+
+      # Requirement 5: Workload Identity Federation is the only supported deployment authentication method
       - name: Authenticate to Google Cloud (Workload Identity Federation)
         id: gcp-auth
-        if: "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}"
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud SDK
-        if: "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}"
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Execute Deployment via Google Cloud IAP Tunnel
-        if: "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}"
+      # Requirement 7: Configure temporary SSH key compatible with Google Cloud OS Login
+      - name: Configure Ephemeral SSH Key for Google Cloud OS Login
         run: |
-          echo "Connecting to Debian VM ${{ vars.GCP_VM_NAME }} in zone ${{ vars.GCP_ZONE }} via IAP tunnel..."
-          gcloud compute ssh "${{ vars.GCP_VM_NAME }}" \
-            --zone="${{ vars.GCP_ZONE }}" \
-            --project="${{ vars.GCP_PROJECT_ID }}" \
-            --tunnel-through-iap \
-            --command="cd /opt/lostandfound && ./scripts/deploy.sh ${{ steps.release.outputs.tag }}"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          # Generate ephemeral Ed25519 key pair with no passphrase
+          ssh-keygen -t ed25519 -f "$HOME/.ssh/google_compute_engine" -N "" -C "github-actions-deployer"
+          chmod 600 "$HOME/.ssh/google_compute_engine"
+          chmod 644 "$HOME/.ssh/google_compute_engine.pub"
 
-      - name: Execute Deployment via Direct SSH (Fallback / Alternative)
-        if: "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' && secrets.SSH_PRIVATE_KEY != '' }}"
+          # Add public key to OS Login profile with a 1-hour time-to-live
+          echo "Registering ephemeral SSH key with Google Cloud OS Login (1h TTL)..."
+          gcloud compute os-login ssh-keys add \
+            --key-file="$HOME/.ssh/google_compute_engine.pub" \
+            --ttl=1h
+
+      # Requirement 8, 9, 12, 14: Use IAP TCP forwarding, preserve host key verification, pass GHCR credentials securely, and fail nonzero
+      - name: Execute Deployment via Google Cloud IAP Tunnel with Host Verification
         env:
-          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-          HOST: ${{ vars.DEPLOY_HOST }}
-          USER: ${{ vars.DEPLOY_USER || 'deploy' }}
+          GCP_VM_NAME: ${{ vars.GCP_VM_NAME }}
+          GCP_ZONE: ${{ vars.GCP_ZONE }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          echo "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
-
-          ssh -i ~/.ssh/id_ed25519 "$USER@$HOST" "cd /opt/lostandfound && ./scripts/deploy.sh ${{ steps.release.outputs.tag }}"
+          echo "Connecting to Debian VM '${GCP_VM_NAME}' in zone '${GCP_ZONE}' via IAP tunnel..."
+          # Pipe GHCR read token securely into stdin of remote docker login, then execute deploy.sh
+          # Preserves SSH host key checking (no StrictHostKeyChecking=no)
+          echo "${GHCR_TOKEN}" | gcloud compute ssh "${GCP_VM_NAME}" \
+            --zone="${GCP_ZONE}" \
+            --project="${GCP_PROJECT_ID}" \
+            --tunnel-through-iap \
+            --ssh-key-file="$HOME/.ssh/google_compute_engine" \
+            --command="docker login ghcr.io -u '${GHCR_USER}' --password-stdin && cd /opt/lostandfound && ./scripts/deploy.sh ${RELEASE_TAG}"
