@@ -1,0 +1,36 @@
+services:
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: mysql+mysqldb://lostfound:lostfound@mysql:3306/lost_found_portal
+      SECRET_KEY: ${SECRET_KEY:-replace-me}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@campus.test}
+      OCI_NAMESPACE: ${OCI_NAMESPACE:-}
+      OCI_BUCKET: ${OCI_BUCKET:-}
+      OCI_REGION: ${OCI_REGION:-}
+    ports:
+      - "5000:5000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: lost_found_portal
+      MYSQL_USER: lostfound
+      MYSQL_PASSWORD: lostfound
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root-change-me}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql-data:

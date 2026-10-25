@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a43">
+  <title>Welcome to CampusFind</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="auth-page">
+  <main class="auth-layout">
+    <section class="auth-welcome">
+      <a class="brand" href="auth.html"><span class="brand-mark">↗</span><span>Campus<span class="brand-accent">Find</span></span></a>
+      <div class="auth-welcome-copy">
+        <span class="eyebrow light">Campus community board</span>
+        <h1>Bring lost things<br><em>back home.</em></h1>
+        <p>Join your campus community and help reunite people with the things they value.</p>
+        <div class="auth-stat"><strong>One community.</strong><span>Countless belongings reunited.</span></div>
+      </div>
+    </section>
+    <section class="auth-card">
+      <div class="auth-card-heading">
+        <span class="eyebrow">Welcome to CampusFind</span>
+        <h2 id="auth-title">Create your account</h2>
+        <p id="auth-subtitle">Sign up to browse and post campus listings.</p>
+      </div>
+      <div class="auth-tabs" role="tablist" aria-label="Authentication">
+        <button class="auth-tab active" id="register-tab" type="button" role="tab" aria-selected="true">Register</button>
+        <button class="auth-tab" id="login-tab" type="button" role="tab" aria-selected="false">Log in</button>
+      </div>
+      <form id="auth-form">
+        <label id="name-field">Name<input id="name" name="name" placeholder="Your name"></label>
+        <label>Email<input id="email" name="email" type="email" placeholder="you@campus.edu" required></label>
+        <label>Password<input id="password" name="password" type="password" placeholder="8+ characters" required></label>
+        <button class="button auth-submit" id="auth-submit" type="submit">Create account <span>→</span></button>
+      </form>
+      <p id="message" class="message" role="status"></p>
+    </section>
+  </main>
+  <script src="auth.js"></script>
+</body>
+</html>

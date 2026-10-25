@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a43">
+  <title>Campus Lost &amp; Found</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <script>
+    if (!localStorage.getItem("campus-token")) {
+      window.location.replace("auth.html");
+    }
+  </script>
+  <header class="site-header">
+    <nav class="nav shell">
+      <a class="brand" href="#"><span class="brand-mark">↗</span><span>Campus<span class="brand-accent">Find</span></span></a>
+      <span class="nav-note">A smarter way to reunite belongings</span>
+    </nav>
+    <div class="hero shell">
+      <div class="hero-copy">
+        <span class="eyebrow light">Campus community board</span>
+        <h1>Lost something?<br><em>Find it here.</em></h1>
+        <p>Post a lost or found item and help your campus community bring it home.</p>
+        <a class="hero-link" href="#post">Post an item <span>→</span></a>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+        <div class="floating-card card-one">🎒 <span>Backpack</span></div>
+        <div class="floating-card card-two">🔑 <span>Keys</span></div>
+        <div class="floating-card card-three">📱 <span>Phone</span></div>
+        <div class="pin">+</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell content">
+    <section class="listings-section">
+      <div class="section-heading">
+        <div><span class="eyebrow">Community listings</span><h2>Browse items</h2></div>
+        <span id="listing-count" class="listing-count">Loading...</span>
+      </div>
+      <form id="search-form" class="search-bar">
+        <span class="search-icon">⌕</span>
+        <input id="query" placeholder="Search by item, place, or description" aria-label="Search listings">
+        <button class="button compact" type="submit">Search</button>
+        <button class="button subtle compact" type="button" id="all">Reset</button>
+      </form>
+      <div id="listings" class="grid" aria-live="polite"></div>
+    </section>
+
+    <aside class="sidebar">
+      <section class="panel post-panel" id="post">
+        <div class="panel-title"><span class="panel-icon green">＋</span><div><span class="eyebrow">Give it a home</span><h2>Post an item</h2></div></div>
+        <form id="item-form">
+          <label>Item title<input name="title" placeholder="e.g. Blue backpack" required></label>
+          <label>Description<textarea name="description" placeholder="Add useful details..." required></textarea></label>
+          <div class="two-col"><label>Type<select name="item_type"><option value="lost">I lost it</option><option value="found">I found it</option></select></label><label>Location<input name="location" placeholder="e.g. Library" required></label></div>
+          <label class="file-input">Photo <span>Optional · JPG, PNG, WebP</span><input name="image" type="file" accept=".jpg,.jpeg,.png,.webp"></label>
+          <button class="button publish" type="submit">Publish listing <span>→</span></button>
+        </form>
+        <p id="message" class="message" role="status"></p>
+      </section>
+    </aside>
+  </main>
+  <footer class="shell footer"><span>CampusFind</span><span>Built for a more connected campus</span></footer>
+  <script src="app.js"></script>
+</body>
+</html>
