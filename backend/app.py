@@ -338,10 +338,29 @@ def create_app(config_object=Config, storage=None, validate_config=True):
             db.session.commit()
             print(f"Administrator '{email}' created successfully.")
 
+    # Serve static frontend files during local development when running standalone Flask
+    frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+    if frontend_dir.exists():
+        @app.get("/")
+        def serve_index():
+            return send_from_directory(frontend_dir, "index.html")
+
+        @app.get("/<path:filename>")
+        def serve_frontend_static(filename):
+            if filename.startswith("api/"):
+                return jsonify(error="Not found"), 404
+            target = frontend_dir / filename
+            if target.is_file():
+                return send_from_directory(frontend_dir, filename)
+            return send_from_directory(frontend_dir, "index.html")
+
     return app
 
 
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.getenv("PORT", 5000))
+    host = os.getenv("HOST", "0.0.0.0")
+    debug = os.getenv("FLASK_DEBUG", "0") in ("1", "true")
+    app.run(host=host, port=port, debug=debug)
