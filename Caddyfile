@@ -1,0 +1,32 @@
+# ==============================================================================
+# Caddyfile - Production HTTPS Reverse Proxy for Campus Lost & Found Portal
+# ==============================================================================
+# Replace 'your-domain.campus.edu' with your registered DNS hostname.
+# Caddy will automatically provision and renew TLS/SSL certificates from Let's Encrypt.
+# ==============================================================================
+
+{$DEPLOY_DOMAIN:lostandfound.campus.edu} {
+    # Forward all traffic to the Nginx frontend container bound to 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:8080 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    # Security Headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/lostandfound.log {
+            roll_size 10MB
+            roll_keep 5
+        }
+    }
+}

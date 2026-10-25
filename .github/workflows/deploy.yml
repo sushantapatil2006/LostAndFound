@@ -1,0 +1,118 @@
+name: Deploy to Google Cloud VM
+
+on:
+  workflow_run:
+    workflows: ["CI and Container Publishing"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Git commit SHA to deploy (must be an immutable commit SHA)"
+        required: true
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy Release to Production VM
+    # Only run if CI and image publishing succeeded on main
+    if: >-
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine and Validate Immutable Release Identifier
+        id: release
+        run: |
+          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            TAG="${{ github.event.inputs.release_tag }}"
+          elif [ -n "${{ github.event.workflow_run.head_sha }}" ]; then
+            TAG="${{ github.event.workflow_run.head_sha }}"
+          else
+            TAG="${{ github.sha }}"
+          fi
+
+          if [ "$TAG" = "latest" ]; then
+            echo "ERROR: Refusing to deploy mutable tag 'latest' in production."
+            exit 1
+          fi
+
+          if [[ ! "$TAG" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+            echo "ERROR: Release identifier '${TAG}' is not a valid immutable Git commit SHA."
+            exit 1
+          fi
+
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Target Release SHA: ${TAG}"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase repository owner
+        id: repo-owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
+
+      - name: Verify Both Frontend and Backend Images Are Published in GHCR
+        run: |
+          TARGET_TAG="${{ steps.release.outputs.tag }}"
+          echo "--> Inspecting frontend image: ghcr.io/${{ steps.repo-owner.outputs.OWNER }}/lostandfound-frontend:${TARGET_TAG}"
+          docker manifest inspect "ghcr.io/${{ steps.repo-owner.outputs.OWNER }}/lostandfound-frontend:${TARGET_TAG}" > /dev/null
+          echo "--> Inspecting backend image: ghcr.io/${{ steps.repo-owner.outputs.OWNER }}/lostandfound-backend:${TARGET_TAG}"
+          docker manifest inspect "ghcr.io/${{ steps.repo-owner.outputs.OWNER }}/lostandfound-backend:${TARGET_TAG}" > /dev/null
+          echo "--> Verified: Both immutable images exist in GHCR."
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        id: gcp-auth
+        if: "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}"
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        if: "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}"
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Execute Deployment via Google Cloud IAP Tunnel
+        if: "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}"
+        run: |
+          echo "Connecting to Debian VM ${{ vars.GCP_VM_NAME }} in zone ${{ vars.GCP_ZONE }} via IAP tunnel..."
+          gcloud compute ssh "${{ vars.GCP_VM_NAME }}" \
+            --zone="${{ vars.GCP_ZONE }}" \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
+            --tunnel-through-iap \
+            --command="cd /opt/lostandfound && ./scripts/deploy.sh ${{ steps.release.outputs.tag }}"
+
+      - name: Execute Deployment via Direct SSH (Fallback / Alternative)
+        if: "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' && secrets.SSH_PRIVATE_KEY != '' }}"
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER || 'deploy' }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/id_ed25519 "$USER@$HOST" "cd /opt/lostandfound && ./scripts/deploy.sh ${{ steps.release.outputs.tag }}"

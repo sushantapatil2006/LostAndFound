@@ -1,0 +1,86 @@
+name: lostandfound-prod
+
+services:
+  frontend:
+    image: ${IMAGE_PREFIX:-ghcr.io/sushantapatil2006}/lostandfound-frontend:${IMAGE_TAG:?IMAGE_TAG must be set}
+    restart: unless-stopped
+    ports:
+      # Bound strictly to localhost; public traffic routed via host reverse proxy (Caddy/Nginx)
+      - "127.0.0.1:8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    networks:
+      - prod-internal-net
+
+  api:
+    image: ${IMAGE_PREFIX:-ghcr.io/sushantapatil2006}/lostandfound-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
+    restart: unless-stopped
+    environment:
+      ENV: production
+      FLASK_DEBUG: "0"
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+      NUM_PROXIES: ${NUM_PROXIES:-1}
+      DATABASE_URL: mysql+mysqldb://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in production}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-auto}
+      UPLOAD_FOLDER: /app/uploads
+      # Google Cloud Storage Settings
+      GCS_BUCKET: ${GCS_BUCKET:-}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      # OCI Settings (if OCI Object Storage is used)
+      OCI_NAMESPACE: ${OCI_NAMESPACE:-}
+      OCI_BUCKET: ${OCI_BUCKET:-}
+      OCI_REGION: ${OCI_REGION:-}
+      OCI_CONFIG_FILE: /root/.oci/config
+      OCI_PROFILE: ${OCI_PROFILE:-DEFAULT}
+    expose:
+      - "5000"
+    volumes:
+      - app-uploads:/app/uploads
+      # Uncomment if running with OCI API keys mounted from host:
+      # - ${HOME}/.oci:/root/.oci:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - prod-internal-net
+
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lost_found_portal}
+      MYSQL_USER: ${MYSQL_USER:-lostfound}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be configured}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be configured}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - prod-internal-net
+
+networks:
+  prod-internal-net:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  app-uploads:

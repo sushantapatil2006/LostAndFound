@@ -1,4 +1,4 @@
-const API = "http://localhost:5000/api";
+const API = "/api";
 let token = localStorage.getItem("campus-token");
 
 const message = (text, error = false) => {
@@ -25,8 +25,24 @@ async function loadItems(url = `${API}/items`) {
   }
 }
 
+function sanitizeImageUrl(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return escapeHtml(url);
+    }
+  } catch {
+    if (url.startsWith("/") && !url.startsWith("//")) {
+      return escapeHtml(url);
+    }
+  }
+  return "";
+}
+
 function renderItem(item) {
-  return `<article class="card">${item.image_url ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.title)}">` : ""}
+  const safeImg = sanitizeImageUrl(item.image_url);
+  return `<article class="card">${safeImg ? `<img src="${safeImg}" alt="${escapeHtml(item.title)}">` : ""}
     <div class="card-top"><span class="tag">${escapeHtml(item.item_type)}</span><span class="status">${escapeHtml(item.status)}</span></div>
     <h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description)}</p><span class="location">${escapeHtml(item.location)}</span></article>`;
 }
@@ -56,5 +72,13 @@ document.querySelector("#item-form").addEventListener("submit", async event => {
   message("Listing published successfully.");
   await loadItems();
 });
+
+const logoutBtn = document.querySelector("#logout-btn");
+if (logoutBtn) {
+  logoutBtn.addEventListener("click", () => {
+    localStorage.removeItem("campus-token");
+    window.location.replace("auth.html");
+  });
+}
 
 loadItems();

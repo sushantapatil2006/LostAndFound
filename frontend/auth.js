@@ -1,4 +1,4 @@
-const API = "http://localhost:5000/api";
+const API = "/api";
 let authMode = "register";
 
 const message = (text, error = false) => {

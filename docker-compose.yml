@@ -1,36 +1,70 @@
+name: lostandfound-dev
+
 services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - lostandfound-net
+
   api:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
-      DATABASE_URL: mysql+mysqldb://lostfound:lostfound@mysql:3306/lost_found_portal
-      SECRET_KEY: ${SECRET_KEY:-replace-me}
+      ENV: development
+      FLASK_DEBUG: "1"
+      DATABASE_URL: mysql+mysqldb://${MYSQL_USER:-lostfound}:${MYSQL_PASSWORD:-lostfound_dev_secret}@mysql:3306/${MYSQL_DATABASE:-lost_found_portal}
+      SECRET_KEY: ${SECRET_KEY:-dev-insecure-secret-key-replace-in-production}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@campus.test}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-dev-admin-bootstrap-secret}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      UPLOAD_FOLDER: /app/uploads
       OCI_NAMESPACE: ${OCI_NAMESPACE:-}
       OCI_BUCKET: ${OCI_BUCKET:-}
       OCI_REGION: ${OCI_REGION:-}
-    ports:
-      - "5000:5000"
+      GCS_BUCKET: ${GCS_BUCKET:-}
+      GCS_PROJECT: ${GCP_PROJECT_ID:-}
+    expose:
+      - "5000"
+    volumes:
+      - dev-uploads:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
-  frontend:
-    build: ./frontend
-    ports:
-      - "8080:80"
+    networks:
+      - lostandfound-net
+
   mysql:
     image: mysql:8.4
+    restart: unless-stopped
     environment:
-      MYSQL_DATABASE: lost_found_portal
-      MYSQL_USER: lostfound
-      MYSQL_PASSWORD: lostfound
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root-change-me}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lost_found_portal}
+      MYSQL_USER: ${MYSQL_USER:-lostfound}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-lostfound_dev_secret}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_dev_secret}
     volumes:
-      - mysql-data:/var/lib/mysql
+      - mysql-dev-data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
       timeout: 5s
       retries: 20
+    networks:
+      - lostandfound-net
+
+networks:
+  lostandfound-net:
+    driver: bridge
 
 volumes:
-  mysql-data:
+  mysql-dev-data:
+  dev-uploads:
